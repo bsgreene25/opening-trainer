@@ -308,5 +308,29 @@
       "Rxe5#"
     ],
     "pgn": "1. e4 e5\n2. Bc4 Nc6\n3. Nf3 Nf6\n4. d4 exd4\n5. O-O Nxe4\n6. Nc3 dxc3\n7. Bxf7+ Kxf7\n8. Qd5+ Ke8\n9. Re1 Be7\n10. Rxe4 h6\n11. Bxh6 gxh6\n12. Qh5+ Kf8\n13. Rf4+ Bf6\n14. Qg6 Rg8\n15. Rxf6+ Qxf6\n16. Qxf6+ Ke8\n17. Re1+ Ne5\n18. Rxe5#"
+  },
+  {
+    "name": "Queen's Pawn",
+    "side": "black",
+    "fen": "start",
+    "moves": [
+      "d4",
+      "e5",
+      "dxe5",
+      "Nc6",
+      "Nf3",
+      "Qe7",
+      "Bf4",
+      "Qb4+",
+      "Bd2",
+      "Qxb2",
+      "Bc3",
+      "Bb4",
+      "Qd2",
+      "Bxc3",
+      "Qxc3",
+      "Qc1#"
+    ],
+    "pgn": "1. d4 e5\n2. dxe5 Nc6\n3. Nf3 Qe7\n4. Bf4 Qb4+\n5. Bd2 Qxb2\n6. Bc3 Bb4\n7. Qd2 Bxc3\n8. Qxc3 Qc1#"
   }
 ]
