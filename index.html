@@ -89,6 +89,9 @@
     margin-top:10px;
     font-weight:bold;
   }
+  .square-selected{
+    box-shadow: inset 0 0 0 4px rgba(255, 193, 7, .85);
+  }
 </style>
 </head>
 <body>
@@ -128,9 +131,11 @@
   <div class="modal-content">
     <h3>Incorrect Move</h3>
     <p>That move does not match the stored line.</p>
-    <div class="modal-buttons">
-      <button id="tryAgainBtn">Try Again</button>
-      <button id="helpBtn">Get Help</button>
+    <div class="modal-buttons" style="flex-wrap:wrap;">
+      <button id="tryAgainBtn">Try Full Line Again</button>
+      <button id="tryLastMoveBtn">Try Last Move Again</button>
+      <button id="helpBtn">Get Full Line Help</button>
+      <button id="helpLastMoveBtn">Get Last Move Help</button>
     </div>
   </div>
 </div>
@@ -147,6 +152,7 @@ let mode = 'input'; // input | practice
 let currentLineMoves = [];
 let currentPracticeLine = null;
 let practiceIndex = 0;
+let selectedSquare = null;
 
 const notationEl = document.getElementById('notation');
 const statusEl = document.getElementById('status');
@@ -205,8 +211,25 @@ function updateNotation(){
   notationEl.value = game.pgn({ max_width: 5 });
 }
 
+function clearSelection(){
+  document.querySelectorAll('#board [data-square].square-selected').forEach(el => {
+    el.classList.remove('square-selected');
+  });
+  selectedSquare = null;
+}
+
+function selectSquare(square){
+  clearSelection();
+  const el = document.querySelector(`#board [data-square=\"${square}\"]`);
+  if(el){
+    el.classList.add('square-selected');
+    selectedSquare = square;
+  }
+}
+
 function resetBoard(){
   game.reset();
+  clearSelection();
   board.position('start');
   updateNotation();
 }
@@ -246,33 +269,35 @@ function saveCurrentLine(){
   alert('Line saved.');
 }
 
-function onDragStart(source, piece){
+function tryMove(source, target){
+  const piece = game.get(source);
+  if(!piece) return false;
+
   if(mode === 'practice'){
     const practiceSide = currentPracticeLine.side;
-    if((practiceSide === 'white' && piece.startsWith('b')) ||
-       (practiceSide === 'black' && piece.startsWith('w'))){
+    const expectedColor = practiceSide === 'white' ? 'w' : 'b';
+    if(piece.color !== expectedColor || game.turn() !== expectedColor){
       return false;
     }
   }
-}
 
-function onDrop(source, target){
   const move = game.move({
     from: source,
     to: target,
     promotion: 'q'
   });
 
-  if(move === null) return 'snapback';
+  if(move === null) return false;
 
+  clearSelection();
   updateNotation();
 
   if(mode === 'input'){
     currentLineMoves.push(move.san);
-    return;
+    board.position(game.fen());
+    return true;
   }
 
-  // practice mode
   const expected = currentPracticeLine.moves[practiceIndex];
 
   if(move.san !== expected){
@@ -280,13 +305,51 @@ function onDrop(source, target){
     board.position(game.fen());
     updateNotation();
     showWrongModal();
-    return;
+    return true;
   }
 
   practiceIndex++;
   board.position(game.fen());
 
   setTimeout(playOpponentMoves, 300);
+  return true;
+}
+
+function handleSquareClick(square){
+  if(wrongModal.style.display === 'flex') return;
+
+  const piece = game.get(square);
+
+  if(selectedSquare){
+    if(square === selectedSquare){
+      clearSelection();
+      return;
+    }
+
+    if(tryMove(selectedSquare, square)) return;
+
+    // If the destination wasn't a legal move, let the user select a different piece.
+    if(piece){
+      const canSelect = mode === 'input' ||
+        (currentPracticeLine && piece.color === (currentPracticeLine.side === 'white' ? 'w' : 'b') &&
+         game.turn() === piece.color);
+      if(canSelect){
+        selectSquare(square);
+        return;
+      }
+    }
+    clearSelection();
+    return;
+  }
+
+  if(!piece) return;
+
+  if(mode === 'practice'){
+    const expectedColor = currentPracticeLine.side === 'white' ? 'w' : 'b';
+    if(piece.color !== expectedColor || game.turn() !== expectedColor) return;
+  }
+
+  selectSquare(square);
 }
 
 function playOpponentMoves(){
@@ -375,14 +438,40 @@ async function showHelp(){
   resetPractice();
 }
 
+function tryLastMove(){
+  hideWrongModal();
+  clearSelection();
+  statusEl.textContent = `Practicing: ${currentPracticeLine.name}`;
+}
+
+async function showLastMoveHelp(){
+  hideWrongModal();
+  clearSelection();
+
+  if(!currentPracticeLine || practiceIndex >= currentPracticeLine.moves.length) return;
+
+  const san = currentPracticeLine.moves[practiceIndex];
+  await new Promise(r => setTimeout(r, 500));
+  game.move(san);
+  practiceIndex++;
+  board.position(game.fen());
+  updateNotation();
+
+  await new Promise(r => setTimeout(r, 500));
+  playOpponentMoves();
+}
+
 board = Chessboard('board', {
-  draggable: true,
+  draggable: false,
   position: 'start',
   orientation: 'white',
   pieceTheme: 'pieces/{piece}.png',
-  onDragStart,
-  onDrop,
   onSnapEnd: () => board.position(game.fen())
+});
+
+document.getElementById('board').addEventListener('click', (event) => {
+  const square = event.target.closest('[data-square]');
+  if(square) handleSquareClick(square.getAttribute('data-square'));
 });
 
 document.getElementById('newLineBtn').onclick = newInputLine;
@@ -395,7 +484,9 @@ document.getElementById('tryAgainBtn').onclick = () => {
   resetPractice();
 };
 
+document.getElementById('tryLastMoveBtn').onclick = tryLastMove;
 document.getElementById('helpBtn').onclick = showHelp;
+document.getElementById('helpLastMoveBtn').onclick = showLastMoveHelp;
 
 renderLines();
 newInputLine();
