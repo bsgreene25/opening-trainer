@@ -112,6 +112,7 @@
   <button id="saveLineBtn">Save Line</button>
   <button id="practiceBtn">Start Practice</button>
   <button id="inputBtn">Input Mode</button>
+  <button id="copyLibraryBtn">Copy Library to GitHub</button>
 </div>
 
 <div class="container">
@@ -160,16 +161,79 @@ const modeLabel = document.getElementById('modeLabel');
 const sideSelect = document.getElementById('sideSelect');
 const wrongModal = document.getElementById('wrongModal');
 
-function loadLines(){
-  return JSON.parse(localStorage.getItem('openingLines') || '[]');
+const SAVED_LINES_URL = 'saved_lines.txt';
+let preloadedLines = [];
+
+function loadLocalLines(){
+  try {
+    return JSON.parse(localStorage.getItem('openingLines') || '[]');
+  } catch(e) {
+    return [];
+  }
+}
+
+function loadDeletedKeys(){
+  try {
+    return JSON.parse(localStorage.getItem('deletedOpeningLines') || '[]');
+  } catch(e) {
+    return [];
+  }
 }
 
 function saveLines(lines){
   localStorage.setItem('openingLines', JSON.stringify(lines));
 }
 
+function saveDeletedKeys(keys){
+  localStorage.setItem('deletedOpeningLines', JSON.stringify(keys));
+}
+
+function lineKey(line){
+  return JSON.stringify({
+    name: line.name || '',
+    side: line.side || 'white',
+    fen: line.fen || 'start',
+    moves: line.moves || []
+  });
+}
+
+function getAllLines(){
+  const combined = [...preloadedLines, ...loadLocalLines()];
+  const deleted = new Set(loadDeletedKeys());
+  const seen = new Set();
+  return combined.filter(line => {
+    const key = lineKey(line);
+    if(deleted.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeLine(line){
+  return {
+    name: line.name || 'Unnamed Line',
+    side: line.side || 'white',
+    fen: line.fen || 'start',
+    moves: Array.isArray(line.moves) ? line.moves : [],
+    pgn: line.pgn || ''
+  };
+}
+
+async function loadPreloadedLines(){
+  try {
+    const response = await fetch(SAVED_LINES_URL + '?v=' + Date.now(), { cache: 'no-store' });
+    if(!response.ok) throw new Error('Could not load saved_lines.txt');
+    const text = await response.text();
+    const parsed = JSON.parse(text);
+    preloadedLines = Array.isArray(parsed) ? parsed.map(normalizeLine) : [];
+  } catch(e) {
+    preloadedLines = [];
+    console.warn('Could not load saved_lines.txt:', e);
+  }
+}
+
 function renderLines(){
-  const lines = loadLines();
+  const lines = getAllLines();
   const container = document.getElementById('linesList');
   container.innerHTML = '';
 
@@ -194,14 +258,22 @@ function renderLines(){
   });
 
   container.querySelectorAll('[data-practice]').forEach(btn => {
-    btn.onclick = () => startPractice(loadLines()[btn.dataset.practice]);
+    btn.onclick = () => startPractice(getAllLines()[btn.dataset.practice]);
   });
 
   container.querySelectorAll('[data-delete]').forEach(btn => {
     btn.onclick = () => {
-      const lines = loadLines();
-      lines.splice(btn.dataset.delete,1);
-      saveLines(lines);
+      const lines = getAllLines();
+      const deletedLine = lines[btn.dataset.delete];
+      if(!deletedLine) return;
+
+      const deletedKeys = loadDeletedKeys();
+      const key = lineKey(deletedLine);
+      if(!deletedKeys.includes(key)) deletedKeys.push(key);
+      saveDeletedKeys(deletedKeys);
+
+      const localLines = loadLocalLines().filter(line => lineKey(line) !== key);
+      saveLines(localLines);
       renderLines();
     };
   });
@@ -256,10 +328,11 @@ function saveCurrentLine(){
   const name = prompt('Name this line:', 'My Opening Line');
   if(!name) return;
 
-  const lines = loadLines();
+  const lines = loadLocalLines();
   lines.push({
     name,
     side: sideSelect.value,
+    fen: 'start',
     moves: currentLineMoves,
     pgn: game.pgn({ max_width: 5 })
   });
@@ -399,7 +472,7 @@ function startPractice(line){
 }
 
 function startRandomPractice(){
-  const lines = loadLines();
+  const lines = getAllLines();
   if(lines.length === 0){
     alert('Save at least one line first.');
     return;
@@ -461,6 +534,48 @@ async function showLastMoveHelp(){
   playOpponentMoves();
 }
 
+async function copyLibraryToGitHub(){
+  const lines = getAllLines().map(normalizeLine);
+
+  if(lines.length === 0){
+    alert('There are no saved lines to copy.');
+    return;
+  }
+
+  const text = JSON.stringify(lines, null, 2);
+
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch(e) {
+    // Clipboard API may be unavailable in some browsers. Fall back to a temporary textarea.
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if(!copied) {
+      alert('The library could not be copied to the clipboard.');
+      return;
+    }
+  }
+
+  const confirmed = confirm(
+    `Copied ${lines.length} saved line${lines.length === 1 ? '' : 's'} to your clipboard.\n\n` +
+    'Clear this device\'s local saved lines now?\n\n' +
+    'After clearing, paste the copied text into saved_lines.txt on GitHub and commit it.'
+  );
+
+  if(confirmed){
+    localStorage.removeItem('openingLines');
+    localStorage.removeItem('deletedOpeningLines');
+    renderLines();
+    alert('Local saved lines cleared. Your clipboard still contains the library data.');
+  }
+}
+
 board = Chessboard('board', {
   draggable: false,
   position: 'start',
@@ -478,6 +593,7 @@ document.getElementById('newLineBtn').onclick = newInputLine;
 document.getElementById('saveLineBtn').onclick = saveCurrentLine;
 document.getElementById('practiceBtn').onclick = startRandomPractice;
 document.getElementById('inputBtn').onclick = newInputLine;
+document.getElementById('copyLibraryBtn').onclick = copyLibraryToGitHub;
 
 document.getElementById('tryAgainBtn').onclick = () => {
   hideWrongModal();
@@ -488,8 +604,11 @@ document.getElementById('tryLastMoveBtn').onclick = tryLastMove;
 document.getElementById('helpBtn').onclick = showHelp;
 document.getElementById('helpLastMoveBtn').onclick = showLastMoveHelp;
 
-renderLines();
-newInputLine();
+(async function init(){
+  await loadPreloadedLines();
+  renderLines();
+  newInputLine();
+})();
 </script>
 
 </body>
