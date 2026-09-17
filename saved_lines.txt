@@ -1,4 +1,4 @@
-[][
+[
   {
     "name": "Caro Kann",
     "side": "white",
