@@ -57,6 +57,16 @@
   .line-title{
     font-weight:bold;
   }
+  .line-item.black-line{
+    background:#111;
+    color:white;
+    border-color:#111;
+  }
+  .line-item.black-line button{
+    background:white;
+    color:#111;
+    border:1px solid #ccc;
+  }
   .mode-badge{
     padding:4px 8px;
     border-radius:20px;
@@ -113,13 +123,14 @@
   <button id="practiceBtn">Start Practice</button>
   <button id="inputBtn">Input Mode</button>
   <button id="copyLibraryBtn">Copy Library to GitHub</button>
+  <button id="clearLocalBtn">Clear Local Library</button>
 </div>
 
 <div class="container">
   <div>
+    <textarea id="notation" readonly></textarea>
     <div id="board"></div>
     <div class="status" id="status"></div>
-    <textarea id="notation" readonly></textarea>
   </div>
 
   <div class="sidepanel">
@@ -201,11 +212,20 @@ function getAllLines(){
   const combined = [...preloadedLines, ...loadLocalLines()];
   const deleted = new Set(loadDeletedKeys());
   const seen = new Set();
-  return combined.filter(line => {
+  const lines = combined.filter(line => {
     const key = lineKey(line);
     if(deleted.has(key) || seen.has(key)) return false;
     seen.add(key);
     return true;
+  });
+
+  return lines.sort((a, b) => {
+    const sideA = (a.side || 'white').toLowerCase();
+    const sideB = (b.side || 'white').toLowerCase();
+    const sideOrderA = sideA === 'white' ? 0 : 1;
+    const sideOrderB = sideB === 'white' ? 0 : 1;
+    if(sideOrderA !== sideOrderB) return sideOrderA - sideOrderB;
+    return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
   });
 }
 
@@ -244,21 +264,70 @@ function renderLines(){
 
   lines.forEach((line, idx) => {
     const div = document.createElement('div');
-    div.className = 'line-item';
-    div.innerHTML = `
-      <div class="line-title">${line.name}</div>
-      <div>Practice as: <b>${line.side}</b></div>
-      <div style="font-size:12px;margin-top:5px;">${line.pgn}</div>
-      <div style="margin-top:10px;display:flex;gap:8px;">
-        <button data-practice="${idx}">Practice</button>
-        <button data-delete="${idx}">Delete</button>
-      </div>
-    `;
+    div.className = 'line-item' + (line.side === 'black' ? ' black-line' : '');
+
+    const title = document.createElement('div');
+    title.className = 'line-title';
+    title.textContent = line.name;
+
+    const side = document.createElement('div');
+    side.innerHTML = 'Practice as: <b></b>';
+    side.querySelector('b').textContent = line.side;
+
+    const pgn = document.createElement('div');
+    pgn.style.fontSize = '12px';
+    pgn.style.marginTop = '5px';
+    pgn.textContent = line.pgn || '';
+
+    const actions = document.createElement('div');
+    actions.style.marginTop = '10px';
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+
+    const practiceBtn = document.createElement('button');
+    practiceBtn.textContent = 'Practice';
+    practiceBtn.dataset.practice = idx;
+
+    const renameBtn = document.createElement('button');
+    renameBtn.textContent = 'Rename';
+    renameBtn.dataset.rename = idx;
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.dataset.delete = idx;
+
+    actions.append(practiceBtn, renameBtn, deleteBtn);
+    div.append(title, side, pgn, actions);
     container.appendChild(div);
   });
 
   container.querySelectorAll('[data-practice]').forEach(btn => {
     btn.onclick = () => startPractice(getAllLines()[btn.dataset.practice]);
+  });
+
+  container.querySelectorAll('[data-rename]').forEach(btn => {
+    btn.onclick = () => {
+      const lines = getAllLines();
+      const line = lines[btn.dataset.rename];
+      if(!line) return;
+
+      const newName = prompt('Rename this line:', line.name || 'Unnamed Line');
+      if(newName === null) return;
+      const trimmedName = newName.trim();
+      if(!trimmedName) return;
+      if(trimmedName === line.name) return;
+
+      // Treat a rename as a local override: hide the old version and save the renamed version locally.
+      const oldKey = lineKey(line);
+      const deletedKeys = loadDeletedKeys();
+      if(!deletedKeys.includes(oldKey)) deletedKeys.push(oldKey);
+      saveDeletedKeys(deletedKeys);
+
+      const localLines = loadLocalLines();
+      localLines.push({ ...normalizeLine(line), name: trimmedName });
+      saveLines(localLines);
+      renderLines();
+    };
   });
 
   container.querySelectorAll('[data-delete]').forEach(btn => {
@@ -562,18 +631,33 @@ async function copyLibraryToGitHub(){
     }
   }
 
-  const confirmed = confirm(
+  alert(
     `Copied ${lines.length} saved line${lines.length === 1 ? '' : 's'} to your clipboard.\n\n` +
-    'Clear this device\'s local saved lines now?\n\n' +
-    'After clearing, paste the copied text into saved_lines.txt on GitHub and commit it.'
+    'Paste the copied text into saved_lines.txt on GitHub and commit the change.'
+  );
+}
+
+function clearLocalLibrary(){
+  const localLines = loadLocalLines();
+  const deletedKeys = loadDeletedKeys();
+
+  if(localLines.length === 0 && deletedKeys.length === 0){
+    alert('There are no local library changes to clear.');
+    return;
+  }
+
+  const confirmed = confirm(
+    'Clear this device\'s local library changes?\n\n' +
+    'This will remove locally saved lines, local renames, and local deletions.\n' +
+    'Your GitHub saved_lines.txt file will not be changed.'
   );
 
-  if(confirmed){
-    localStorage.removeItem('openingLines');
-    localStorage.removeItem('deletedOpeningLines');
-    renderLines();
-    alert('Local saved lines cleared. Your clipboard still contains the library data.');
-  }
+  if(!confirmed) return;
+
+  localStorage.removeItem('openingLines');
+  localStorage.removeItem('deletedOpeningLines');
+  renderLines();
+  alert('Local library changes cleared.');
 }
 
 board = Chessboard('board', {
@@ -594,6 +678,7 @@ document.getElementById('saveLineBtn').onclick = saveCurrentLine;
 document.getElementById('practiceBtn').onclick = startRandomPractice;
 document.getElementById('inputBtn').onclick = newInputLine;
 document.getElementById('copyLibraryBtn').onclick = copyLibraryToGitHub;
+document.getElementById('clearLocalBtn').onclick = clearLocalLibrary;
 
 document.getElementById('tryAgainBtn').onclick = () => {
   hideWrongModal();
