@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Opening Trainer MVP</title>
+
+<link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+
+<style>
+  body{
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background:#f4f4f4;
+  }
+  h1{ margin-top:0; }
+  .topbar{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    margin-bottom:10px;
+    flex-wrap:wrap;
+  }
+  .container{
+    display:flex;
+    gap:20px;
+    align-items:flex-start;
+    flex-wrap:wrap;
+  }
+  #board{
+    width:560px;
+    max-width:90vw;
+  }
+  .sidepanel{
+    width:320px;
+    background:white;
+    padding:15px;
+    border-radius:10px;
+    box-shadow:0 2px 6px rgba(0,0,0,.1);
+  }
+  textarea{
+    width:100%;
+    height:120px;
+    font-family: monospace;
+  }
+  button{
+    padding:8px 12px;
+    cursor:pointer;
+  }
+  .line-item{
+    border:1px solid #ddd;
+    border-radius:8px;
+    padding:10px;
+    margin-bottom:10px;
+    background:#fafafa;
+  }
+  .line-title{
+    font-weight:bold;
+  }
+  .mode-badge{
+    padding:4px 8px;
+    border-radius:20px;
+    background:#333;
+    color:white;
+    font-size:12px;
+  }
+  .modal{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.5);
+    display:none;
+    align-items:center;
+    justify-content:center;
+  }
+  .modal-content{
+    background:white;
+    padding:20px;
+    border-radius:12px;
+    width:320px;
+    text-align:center;
+  }
+  .modal-buttons{
+    display:flex;
+    gap:10px;
+    justify-content:center;
+    margin-top:15px;
+  }
+  .status{
+    margin-top:10px;
+    font-weight:bold;
+  }
+</style>
+</head>
+<body>
+
+<h1>Opening Trainer</h1>
+
+<div class="topbar">
+  <span class="mode-badge" id="modeLabel">Input Mode</span>
+
+  <label>Practice side:
+    <select id="sideSelect">
+      <option value="white">White</option>
+      <option value="black">Black</option>
+    </select>
+  </label>
+
+  <button id="newLineBtn">New Line</button>
+  <button id="saveLineBtn">Save Line</button>
+  <button id="practiceBtn">Start Practice</button>
+  <button id="inputBtn">Input Mode</button>
+</div>
+
+<div class="container">
+  <div>
+    <textarea id="notation" readonly></textarea>
+    <div id="board"></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="sidepanel">
+    <h3>Saved Lines</h3>
+    <div id="linesList"></div>
+  </div>
+</div>
+
+<div class="modal" id="wrongModal">
+  <div class="modal-content">
+    <h3>Incorrect Move</h3>
+    <p>That move does not match the stored line.</p>
+    <div class="modal-buttons">
+      <button id="tryAgainBtn">Try Again</button>
+      <button id="helpBtn">Get Help</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+
+<script>
+let board;
+let game = new Chess();
+
+let mode = 'input'; // input | practice
+let currentLineMoves = [];
+let currentPracticeLine = null;
+let practiceIndex = 0;
+
+const notationEl = document.getElementById('notation');
+const statusEl = document.getElementById('status');
+const modeLabel = document.getElementById('modeLabel');
+const sideSelect = document.getElementById('sideSelect');
+const wrongModal = document.getElementById('wrongModal');
+
+function loadLines(){
+  return JSON.parse(localStorage.getItem('openingLines') || '[]');
+}
+
+function saveLines(lines){
+  localStorage.setItem('openingLines', JSON.stringify(lines));
+}
+
+function renderLines(){
+  const lines = loadLines();
+  const container = document.getElementById('linesList');
+  container.innerHTML = '';
+
+  if(lines.length === 0){
+    container.innerHTML = '<p>No lines saved yet.</p>';
+    return;
+  }
+
+  lines.forEach((line, idx) => {
+    const div = document.createElement('div');
+    div.className = 'line-item';
+    div.innerHTML = `
+      <div class="line-title">${line.name}</div>
+      <div>Practice as: <b>${line.side}</b></div>
+      <div style="font-size:12px;margin-top:5px;">${line.pgn}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        <button data-practice="${idx}">Practice</button>
+        <button data-delete="${idx}">Delete</button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  container.querySelectorAll('[data-practice]').forEach(btn => {
+    btn.onclick = () => startPractice(loadLines()[btn.dataset.practice]);
+  });
+
+  container.querySelectorAll('[data-delete]').forEach(btn => {
+    btn.onclick = () => {
+      const lines = loadLines();
+      lines.splice(btn.dataset.delete,1);
+      saveLines(lines);
+      renderLines();
+    };
+  });
+}
+
+function updateNotation(){
+  notationEl.value = game.pgn({ max_width: 5 });
+}
+
+function resetBoard(){
+  game.reset();
+  board.position('start');
+  updateNotation();
+}
+
+function setMode(newMode){
+  mode = newMode;
+  modeLabel.textContent = newMode === 'input' ? 'Input Mode' : 'Practice Mode';
+  statusEl.textContent = '';
+}
+
+function newInputLine(){
+  setMode('input');
+  currentLineMoves = [];
+  resetBoard();
+  board.orientation(sideSelect.value);
+}
+
+function saveCurrentLine(){
+  if(currentLineMoves.length === 0){
+    alert('No moves recorded.');
+    return;
+  }
+
+  const name = prompt('Name this line:', 'My Opening Line');
+  if(!name) return;
+
+  const lines = loadLines();
+  lines.push({
+    name,
+    side: sideSelect.value,
+    moves: currentLineMoves,
+    pgn: game.pgn({ max_width: 5 })
+  });
+
+  saveLines(lines);
+  renderLines();
+  alert('Line saved.');
+}
+
+function onDragStart(source, piece){
+  if(mode === 'practice'){
+    const practiceSide = currentPracticeLine.side;
+    if((practiceSide === 'white' && piece.startsWith('b')) ||
+       (practiceSide === 'black' && piece.startsWith('w'))){
+      return false;
+    }
+  }
+}
+
+function onDrop(source, target){
+  const move = game.move({
+    from: source,
+    to: target,
+    promotion: 'q'
+  });
+
+  if(move === null) return 'snapback';
+
+  updateNotation();
+
+  if(mode === 'input'){
+    currentLineMoves.push(move.san);
+    return;
+  }
+
+  // practice mode
+  const expected = currentPracticeLine.moves[practiceIndex];
+
+  if(move.san !== expected){
+    game.undo();
+    board.position(game.fen());
+    updateNotation();
+    showWrongModal();
+    return;
+  }
+
+  practiceIndex++;
+  board.position(game.fen());
+
+  setTimeout(playOpponentMoves, 300);
+}
+
+function playOpponentMoves(){
+  if(!currentPracticeLine) return;
+
+  const practiceSide = currentPracticeLine.side;
+
+  while(practiceIndex < currentPracticeLine.moves.length){
+    const turn = game.turn(); // w or b
+    const isUsersTurn =
+      (practiceSide === 'white' && turn === 'w') ||
+      (practiceSide === 'black' && turn === 'b');
+
+    if(isUsersTurn) return;
+
+    const san = currentPracticeLine.moves[practiceIndex];
+    game.move(san);
+    practiceIndex++;
+    board.position(game.fen());
+    updateNotation();
+  }
+
+  if(practiceIndex >= currentPracticeLine.moves.length){
+    statusEl.textContent = 'Line completed successfully.';
+  }
+}
+
+function startPractice(line){
+  currentPracticeLine = line;
+  practiceIndex = 0;
+
+  setMode('practice');
+
+  game.reset();
+  board.orientation(line.side);
+  board.position('start');
+  updateNotation();
+
+  if(line.side === 'black'){
+    game.move(line.moves[0]);
+    practiceIndex = 1;
+    board.position(game.fen());
+    updateNotation();
+  }
+
+  statusEl.textContent = `Practicing: ${line.name}`;
+}
+
+function startRandomPractice(){
+  const lines = loadLines();
+  if(lines.length === 0){
+    alert('Save at least one line first.');
+    return;
+  }
+  const random = lines[Math.floor(Math.random() * lines.length)];
+  startPractice(random);
+}
+
+function showWrongModal(){
+  wrongModal.style.display = 'flex';
+}
+
+function hideWrongModal(){
+  wrongModal.style.display = 'none';
+}
+
+function resetPractice(){
+  startPractice(currentPracticeLine);
+}
+
+async function showHelp(){
+  hideWrongModal();
+
+  game.reset();
+  board.position('start');
+  updateNotation();
+
+  for(const san of currentPracticeLine.moves){
+    await new Promise(r => setTimeout(r, 1200));
+    game.move(san);
+    board.position(game.fen());
+    updateNotation();
+  }
+
+  await new Promise(r => setTimeout(r, 1500));
+  resetPractice();
+}
+
+board = Chessboard('board', {
+  draggable: true,
+  position: 'start',
+  orientation: 'white',
+  pieceTheme: 'pieces/{piece}.png',
+  onDragStart,
+  onDrop,
+  onSnapEnd: () => board.position(game.fen())
+});
+
+document.getElementById('newLineBtn').onclick = newInputLine;
+document.getElementById('saveLineBtn').onclick = saveCurrentLine;
+document.getElementById('practiceBtn').onclick = startRandomPractice;
+document.getElementById('inputBtn').onclick = newInputLine;
+
+document.getElementById('tryAgainBtn').onclick = () => {
+  hideWrongModal();
+  resetPractice();
+};
+
+document.getElementById('helpBtn').onclick = showHelp;
+
+renderLines();
+newInputLine();
+</script>
+
+</body>
+</html>
